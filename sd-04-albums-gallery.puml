@@ -1,0 +1,224 @@
+﻿@startuml
+skinparam sequenceMessageAlign center
+skinparam backgroundColor #FEFEFE
+skinparam ParticipantBackgroundColor #E8F4F8
+skinparam ArrowColor #333333
+skinparam ActorBackgroundColor #FFE6CC
+
+title SD-04 - Albums Gallery Browsing Flow
+
+actor Visitor
+participant Browser
+participant Server
+participant Router
+participant Controller
+participant Model
+database Database
+
+Visitor -> Browser: 1. Navigate to albums page\nGET /albums
+activate Browser
+
+Browser -> Server: 2. GET /albums
+activate Server
+deactivate Browser
+
+Server -> Router: 3. Route to Albums controller
+activate Router
+deactivate Server
+
+Router -> Controller: 4. Call index() method
+activate Controller
+deactivate Router
+
+note right of Controller
+    Setup pagination:
+    - Count total active albums
+    - Configure pagination library
+    - Handle URI segments for pagination
+end note
+
+Controller -> Model: 5. view('album')->num_rows()
+activate Model
+
+Model -> Database: 6. SELECT COUNT(*) FROM album
+activate Database
+
+Database --> Model: 7. Return total count
+deactivate Database
+
+Model --> Controller: 8. Return total count
+deactivate Model
+
+Controller -> Model: 9. view_where_ordering_limit('album',['aktif'=>'Y'],'id_album','DESC',$offset,10)
+activate Model
+
+Model -> Database: 10. SELECT * FROM album\nWHERE aktif = 'Y'\nORDER BY id_album DESC\nLIMIT 10 OFFSET $offset
+activate Database
+
+Database --> Model: 11. Return paginated albums
+deactivate Database
+
+Model --> Controller: 12. Return albums data
+deactivate Model
+
+Controller -> Browser: 13. Render template\n(template().'/template', template().'/album', $data)
+activate Browser
+
+Browser -> Visitor: 14. Display albums list\nwith pagination
+deactivate Browser
+
+opt User clicks album detail
+    Visitor -> Browser: 15. Click album title\nGET /albums/detail/album-seo-slug
+    activate Browser
+
+    Browser -> Server: 16. GET /albums/detail/album-seo-slug
+    activate Server
+    deactivate Browser
+
+    Server -> Router: 17. Route to Albums controller detail()
+    activate Router
+    deactivate Server
+
+    Router -> Controller: 18. Call detail() method
+    activate Controller
+    deactivate Router
+
+    Controller -> Model: 19. view_join_one('album','users','username',['album_seo'=>$seo],'id_album','DESC',0,1)
+    activate Model
+
+    Model -> Database: 20. SELECT album.*, users.username\nFROM album\nJOIN users ON album.username = users.username\nWHERE album.album_seo = '$seo'\nORDER BY album.id_album DESC LIMIT 1
+    activate Database
+
+    Database --> Model: 21. Return album detail
+    deactivate Database
+
+    Model --> Controller: 22. Return album data
+    deactivate Model
+
+    alt Album found
+        note right of Controller
+            Setup gallery pagination:
+            - Count gallery items for this album
+            - Configure pagination for gallery images
+        end note
+
+        Controller -> Model: 23. view_where('gallery',['id_album'=>$id])->num_rows()
+        activate Model
+
+        Model -> Database: 24. SELECT COUNT(*) FROM gallery\nWHERE id_album = $id
+        activate Database
+
+        Database --> Model: 25. Return gallery count
+        deactivate Database
+
+        Model --> Controller: 26. Return gallery count
+        deactivate Model
+
+        Controller -> Model: 27. view_where_ordering_limit('gallery',['gallery.id_album'=>$id],'id_gallery','DESC',$offset,1)
+        activate Model
+
+        Model -> Database: 28. SELECT * FROM gallery\nWHERE gallery.id_album = $id\nORDER BY id_gallery DESC\nLIMIT 1 OFFSET $offset
+        activate Database
+
+        Database --> Model: 29. Return paginated gallery
+        deactivate Database
+
+        Model --> Controller: 30. Return gallery data
+        deactivate Model
+
+        note right of Controller
+            Update album hit counter:
+            - Increment hits_album field
+        end note
+
+        Controller -> Model: 31. update('album', ['hits_album'=>$hits+1], ['id_album'=>$id])
+        activate Model
+
+        Model -> Database: 32. UPDATE album SET hits_album = hits_album + 1\nWHERE id_album = $id
+        activate Database
+
+        Database --> Model: 33. Update successful
+        deactivate Database
+
+        Model --> Controller: 34. Return update result
+        deactivate Model
+
+        Controller -> Browser: 35. Render detail template\n(template().'/template', template().'/detailalbum', $data)
+        activate Browser
+
+        Browser -> Visitor: 36. Display album detail\nwith gallery images
+        deactivate Browser
+
+    else Album not found
+        Controller -> Browser: 37. redirect('main')
+        activate Browser
+        Browser -> Visitor: 38. Redirect to homepage
+        deactivate Browser
+    end
+end
+
+opt User views album frame
+    Visitor -> Browser: 39. Click frame view\nGET /albums/frame/album-seo-slug
+    activate Browser
+
+    Browser -> Server: 40. GET /albums/frame/album-seo-slug
+    activate Server
+    deactivate Browser
+
+    Server -> Router: 41. Route to Albums controller frame()
+    activate Router
+    deactivate Server
+
+    Router -> Controller: 42. Call frame() method
+    activate Controller
+    deactivate Router
+
+    note right of Controller
+        Frame view loads all gallery images
+        without pagination for slideshow
+    end note
+
+    Controller -> Model: 43. view_join_one('album','users','username',['album_seo'=>$seo],'id_album','DESC',0,1)
+    activate Model
+
+    Model -> Database: 44. SELECT album.*, users.username\nFROM album\nJOIN users ON album.username = users.username\nWHERE album.album_seo = '$seo'\nORDER BY album.id_album DESC LIMIT 1
+    activate Database
+
+    Database --> Model: 45. Return album data
+    deactivate Database
+
+    Model --> Controller: 46. Return album data
+    deactivate Model
+
+    Controller -> Model: 47. view_single('gallery',['gallery.id_album'=>$id],'id_gallery','ASC')
+    activate Model
+
+    Model -> Database: 48. SELECT * FROM gallery\nWHERE gallery.id_album = $id\nORDER BY id_gallery ASC
+    activate Database
+
+    Database --> Model: 49. Return all gallery images
+    deactivate Database
+
+    Model --> Controller: 50. Return all images
+    deactivate Model
+
+    Controller -> Model: 51. update('album', ['hits_album'=>$hits+1], ['id_album'=>$id])
+    activate Model
+
+    Model -> Database: 52. UPDATE album SET hits_album = hits_album + 1\nWHERE id_album = $id
+    activate Database
+
+    Database --> Model: 53. Update successful
+    deactivate Database
+
+    Model --> Controller: 54. Return update result
+    deactivate Model
+
+    Controller -> Browser: 55. Render frame view\n(template().'/framealbum', $data)
+    activate Browser
+
+    Browser -> Visitor: 56. Display frame view\nfor slideshow
+    deactivate Browser
+end
+
+@enduml

@@ -1,0 +1,215 @@
+﻿@startuml
+skinparam sequenceMessageAlign center
+skinparam backgroundColor #FEFEFE
+skinparam ParticipantBackgroundColor #E8F4F8
+skinparam ArrowColor #333333
+skinparam ActorBackgroundColor #FFE6CC
+
+title SD-05 - Polling Voting Flow
+
+actor Visitor
+participant Browser
+participant Server
+participant Router
+participant Controller
+participant Model
+database Database
+
+Visitor -> Browser: 1. Navigate to page with poll\nGET /page-with-poll
+activate Browser
+
+Browser -> Server: 2. GET /page-with-poll
+activate Server
+deactivate Browser
+
+Server -> Router: 3. Route to Polling controller
+activate Router
+deactivate Server
+
+Router -> Controller: 4. Call index() method
+activate Controller
+deactivate Router
+
+note right of Controller
+    Load polling data:
+    - Get active question
+    - Get answer options
+    - Check if user already voted (session)
+end note
+
+Controller -> Model: 5. view_where_ordering_limit('poling',"status='Pertanyaan'",'id_poling','DESC',0,1)
+activate Model
+
+Model -> Database: 6. SELECT * FROM poling\nWHERE status = 'Pertanyaan'\nORDER BY id_poling DESC LIMIT 1
+activate Database
+deactivate Model
+
+Database --> Model: 7. Return polling question
+deactivate Database
+activate Model
+
+Model --> Controller: 8. Return question data
+deactivate Model
+activate Controller
+
+Controller -> Model: 9. view_where_ordering_limit('poling',"status='Jawaban'",'id_poling','ASC',0,10)
+activate Model
+
+Model -> Database: 10. SELECT * FROM poling\nWHERE status = 'Jawaban'\nORDER BY id_poling ASC LIMIT 10
+activate Database
+deactivate Model
+
+Database --> Model: 11. Return answer options
+deactivate Database
+activate Model
+
+Model --> Controller: 12. Return answer data
+deactivate Model
+activate Controller
+
+note right of Controller
+    Check voting session:
+    - Look for 'poling' session variable
+    - If exists, user already voted
+end note
+
+Controller -> Browser: 13. Render poll in template\n(template().'/template', template().'/content', $data)
+activate Browser
+
+Browser -> Visitor: 14. Display poll with options
+deactivate Browser
+
+opt User submits vote
+    Visitor -> Browser: 15. Select answer and submit\nPOST /polling/vote
+    activate Browser
+
+    Browser -> Server: 16. POST /polling/vote\n(answer_id, captcha)
+    activate Server
+    deactivate Browser
+
+    Server -> Router: 17. Route to Polling controller vote()
+    activate Router
+    deactivate Server
+
+    Router -> Controller: 18. Call vote() method
+    activate Controller
+    deactivate Router
+
+    note right of Controller
+        Validate submission:
+        - Check captcha
+        - Verify answer exists
+        - Check if user already voted
+    end note
+
+    alt Captcha valid and not voted
+        note right of Controller
+            Process vote:
+            - Increment rating for selected answer
+            - Set session to prevent double voting
+        end note
+
+        Controller -> Model: 19. update('poling', ['rating'=>$rating+1], ['id_poling'=>$answer_id])
+        activate Model
+
+        Model -> Database: 20. UPDATE poling SET rating = rating + 1\nWHERE id_poling = $answer_id
+        activate Database
+        deactivate Model
+
+        Database --> Model: 21. Update successful
+        deactivate Database
+        activate Model
+
+        Model --> Controller: 22. Return update result
+        deactivate Model
+        activate Controller
+
+        note right of Controller
+            Set voting session:
+            - Store 'poling' in session
+            - Prevent future votes
+        end note
+
+        Controller -> Browser: 23. redirect('main')
+        activate Browser
+
+        Browser -> Visitor: 24. Redirect to homepage\n(vote recorded)
+        deactivate Browser
+
+    else Invalid captcha or already voted
+        Controller -> Browser: 25. redirect('main')
+        activate Browser
+
+        Browser -> Visitor: 26. Redirect to homepage\n(vote not recorded)
+        deactivate Browser
+    end
+end
+
+opt User views poll results
+    Visitor -> Browser: 27. Click view results\nGET /polling/lihat
+    activate Browser
+
+    Browser -> Server: 28. GET /polling/lihat
+    activate Server
+    deactivate Browser
+
+    Server -> Router: 29. Route to Polling controller lihat()
+    activate Router
+    deactivate Server
+
+    Router -> Controller: 30. Call lihat() method
+    activate Controller
+    deactivate Router
+
+    note right of Controller
+        Load results data:
+        - Get question
+        - Get all answers with ratings
+        - Calculate percentages
+    end note
+
+    Controller -> Model: 31. view_where_ordering_limit('poling',"status='Pertanyaan'",'id_poling','DESC',0,1)
+    activate Model
+
+    Model -> Database: 32. SELECT * FROM poling\nWHERE status = 'Pertanyaan'\nORDER BY id_poling DESC LIMIT 1
+    activate Database
+    deactivate Model
+
+    Database --> Model: 33. Return question
+    deactivate Database
+    activate Model
+
+    Model --> Controller: 34. Return question
+    deactivate Model
+    activate Controller
+
+    Controller -> Model: 35. view_where_ordering_limit('poling',"status='Jawaban'",'rating','DESC',0,10)
+    activate Model
+
+    Model -> Database: 36. SELECT * FROM poling\nWHERE status = 'Jawaban'\nORDER BY rating DESC LIMIT 10
+    activate Database
+    deactivate Model
+
+    Database --> Model: 37. Return answers with ratings
+    deactivate Database
+    activate Model
+
+    Model --> Controller: 38. Return results data
+    deactivate Model
+    activate Controller
+
+    note right of Controller
+        Calculate statistics:
+        - Total votes
+        - Percentages for each option
+        - Sort by rating descending
+    end note
+
+    Controller -> Browser: 39. Render results template\n(template().'/template', template().'/lihatpoling', $data)
+    activate Browser
+
+    Browser -> Visitor: 40. Display poll results\nwith percentages
+    deactivate Browser
+end
+
+@enduml

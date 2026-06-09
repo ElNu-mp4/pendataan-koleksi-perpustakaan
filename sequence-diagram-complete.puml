@@ -1,0 +1,945 @@
+@startuml Library Data Collection System - Sequence Diagram
+!define AWSPUML https://raw.githubusercontent.com/awslabs/aws-icons-for-plantuml/v14.0/dist
+skinparam sequenceMessageAlign center
+skinparam backgroundColor #FEFEFE
+skinparam ParticipantBackgroundColor #E8F4F8
+skinparam ArrowColor #333333
+skinparam ActorBackgroundColor #FFE6CC
+skinparam groupBackgroundColor #F5F5F5
+
+title Library Data Collection System - Complete Sequence Flows
+autonumber
+
+' ════════════════════════════════════════════════════════════════════════════
+' PARTICIPANT DECLARATIONS
+' ════════════════════════════════════════════════════════════════════════════
+actor User
+participant "Browser\n(Frontend)" as Browser
+participant "Web Server\n(Apache)" as Server
+participant "Router\n(CI Routes)" as Router
+participant "Pendataan\nController" as Controller
+participant "Database\nModel Layer" as Model
+database "MySQL\nDatabase" as Database
+
+' ════════════════════════════════════════════════════════════════════════════
+' FLOW 1: USER AUTHENTICATION
+' ════════════════════════════════════════════════════════════════════════════
+group User Authentication (Login)
+    User -> Browser: 1. Click Login Button
+    activate Browser
+    
+    Browser -> Server: 2. POST /login\n(username, password)
+    activate Server
+    deactivate Browser
+    
+    Server -> Router: 3. Route to appropriate\nController action
+    activate Router
+    deactivate Server
+    
+    Router -> Controller: 4. Instantiate & call\nlogin() method
+    activate Controller
+    deactivate Router
+    
+    note right of Controller
+        Check CSRF token
+        Validate HTTP method
+        Sanitize input (xss_clean)
+    end note
+    
+    Controller -> Model: 5. Check credentials()\nSELECT username, password\nFROM users WHERE username=?
+    activate Model
+    deactivate Controller
+    
+    Model -> Database: 6. Execute SELECT query
+    activate Database
+    deactivate Model
+    
+    alt Credentials Found & Password Matches
+        Database --> Model: 7. Return user row\n{id, username, role, email}
+        deactivate Database
+        activate Model
+        
+        Model --> Controller: 8. Return user object
+        deactivate Model
+        activate Controller
+        
+        note right of Controller
+            password_verify($password_input, $hashed_password)
+            Create session: $_SESSION['user_id']
+            Set session timeout
+        end note
+        
+        Controller -> Browser: 9. 302 Redirect\nLocation: /dashboard
+        activate Browser
+        deactivate Controller
+        
+        Browser -> User: 10. Display Dashboard
+        deactivate Browser
+        
+    else Invalid Credentials
+        Database --> Model: 11. Return empty result
+        deactivate Database
+        activate Model
+        
+        Model --> Controller: 12. Return FALSE
+        deactivate Model
+        activate Controller
+        
+        Controller -> Browser: 13. 200 OK\n{status: "error",\nmessage: "Invalid username or password"}
+        deactivate Controller
+        activate Browser
+        
+        Browser -> User: 14. Display Error Message\nRedirect to login
+        deactivate Browser
+    end
+    
+    note left of Browser
+        Session cookie stored in browser
+        Future requests include session_id
+        Rate limiting tracked per session
+    end note
+end
+
+' ════════════════════════════════════════════════════════════════════════════
+' FLOW 2: LIBRARY DATA ENTRY (CREATE)
+' ════════════════════════════════════════════════════════════════════════════
+group Library Data Entry (Form Submission)
+    
+    User -> Browser: 15. Fill survey form\nand click Submit
+    activate Browser
+    
+    note right of Browser
+        Form data structure:
+        pertanyaan[id_pertanyaan] = value
+        Supports: text, textarea,\nnumber, select, radio, checkbox
+    end note
+    
+    Browser -> Server: 16. POST /pendataan/submit\n(X-Requested-With: XMLHttpRequest)\nBody: pertanyaan[1]=value1...[n]=valuen
+    activate Server
+    deactivate Browser
+    
+    note left of Server
+        Content-Type: application/x-www-form-urlencoded
+        X-Requested-With header identifies AJAX request
+    end note
+    
+    Server -> Router: 17. Route POST /pendataan/submit
+    activate Router
+    deactivate Server
+    
+    Router -> Controller: 18. Call submit() method
+    activate Controller
+    deactivate Router
+    
+    note right of Controller
+        Step 1: Check AJAX request
+        is_ajax_request() validates X-Requested-With header
+    end note
+    
+    alt is_ajax_request() = TRUE
+        
+        note right of Controller
+            Step 2: Security checks
+            - Honeypot detection
+            - Rate limit check (1 per hour per session)
+            - Double submission prevention (30 sec window)
+        end note
+        
+        Controller -> Controller: 19. Check honeypot\n(empty website_url field?)
+        activate Controller
+        deactivate Controller
+        
+        Controller -> Controller: 20. Check rate limit\ncache.get('rate_limit_session_' . md5(sid))
+        activate Controller
+        deactivate Controller
+        
+        Controller -> Controller: 21. Check double submission\ncache.get('double_submit_' . md5(sid))
+        activate Controller
+        deactivate Controller
+        
+        alt Any security check fails
+            Controller -> Browser: 22. 403 Forbidden\n{error: "submission_blocked"}
+            deactivate Controller
+            activate Browser
+            Browser -> User: 23. Show error\nRedirect to /pendataan
+            deactivate Browser
+            
+        else All security checks pass
+            
+            note right of Controller
+                Step 3: Data validation
+                Form validation library
+                Check required fields
+                Validate data types & ranges
+            end note
+            
+            Controller -> Controller: 24. Load form_validation library\nSet rules for each field
+            activate Controller
+            deactivate Controller
+            
+            loop Validate each question
+                Controller -> Controller: 25. Validate field constraints\n(required, numeric, max_length)
+                activate Controller
+                deactivate Controller
+            end
+            
+            alt Validation fails
+                Controller -> Browser: 26. 200 OK\n{error: "validation_errors",\nerrors: {...}}
+                deactivate Controller
+                activate Browser
+                Browser -> User: 27. Display validation errors
+                deactivate Browser
+                
+            else Validation passes
+                
+                note right of Controller
+                    Step 4: Sanitize input
+                    Remove null bytes
+                    Remove script tags
+                    Remove event handlers
+                    Trim and normalize whitespace
+                end note
+                
+                Controller -> Controller: 28. Sanitize input array\n_sanitize_input($jawaban_post)
+                activate Controller
+                deactivate Controller
+                
+                note right of Controller
+                    Step 5: Persist to database
+                    Begin transaction for atomicity
+                    Insert identitas_input_koleksi row
+                    Insert batch of jawaban_koleksi rows
+                end note
+                
+                Controller -> Model: 29. Begin transaction\ndb.trans_begin()
+                deactivate Controller
+                activate Model
+                
+                Model -> Database: 30. START TRANSACTION
+                deactivate Model
+                activate Database
+                deactivate Database
+                
+                Controller -> Model: 31. Insert row into identitas_input_koleksi\nINSERT INTO identitas_input_koleksi\n(nomor_pokok, tahun_data, ip_address, session_id)\nVALUES('-', 2026, '192.168.1.1', 'sess123...')
+                activate Controller
+                activate Model
+                deactivate Controller
+                
+                Model -> Database: 32. Execute INSERT statement
+                deactivate Model
+                activate Database
+                
+                Database --> Model: 33. Return INSERT id\n(id_koleksi = 42)
+                deactivate Database
+                activate Model
+                
+                Model --> Controller: 34. Return insert_id() = 42
+                deactivate Model
+                activate Controller
+                
+                note right of Controller
+                    Extract nomor_pokok from jawaban
+                    (this becomes the library reference number)
+                end note
+                
+                Controller -> Model: 35. Insert batch rows into jawaban_koleksi\nINSERT INTO jawaban_koleksi\n(id_koleksi, id_pertanyaan, jawaban)\nVALUES (42, 1, 'J4.1.1'),\n(42, 2, 'Perpustakaan XYZ'),\n(42, 15, '5000'),\n... [up to 100+ rows]
+                activate Model
+                deactivate Controller
+                
+                Model -> Database: 36. Execute batch INSERT
+                deactivate Model
+                activate Database
+                
+                Database --> Model: 37. Rows inserted successfully\naffected_rows = 85
+                deactivate Database
+                activate Model
+                
+                Model --> Controller: 38. Return TRUE
+                deactivate Model
+                activate Controller
+                
+                note right of Controller
+                    Verify transaction status
+                    If successful: commit
+                    If failed: rollback
+                end note
+                
+                Controller -> Model: 39. Commit transaction\nif (db.trans_status() === FALSE)\n  db.trans_rollback()
+                activate Model
+                deactivate Controller
+                
+                Model -> Database: 40. COMMIT
+                deactivate Model
+                activate Database
+                deactivate Database
+                
+                note right of Controller
+                    Update rate limit counter
+                    Mark submission (prevent double submit)
+                    Clear related cache entries
+                end note
+                
+                Controller -> Controller: 41. Update rate limit\ncache.save('rate_limit_session_' . md5(sid), 1, 3600)
+                activate Controller
+                deactivate Controller
+                
+                Controller -> Controller: 42. Mark double submission\ncache.save('double_submit_' . md5(sid), time(), 30)
+                activate Controller
+                deactivate Controller
+                
+                Controller -> Controller: 43. Clear cache entries\nDelete pendataan/rekap_* entries
+                activate Controller
+                deactivate Controller
+                
+                Controller -> Browser: 44. 200 OK\n{status: "success",\nid_koleksi: 42,\nmessage: "Data submitted successfully"}
+                deactivate Controller
+                activate Browser
+                
+                note left of Browser
+                    AJAX response handling in JavaScript
+                    If status === success:
+                      - Show confirmation
+                      - Redirect to /pendataan/terima_kasih
+                end note
+                
+                Browser -> User: 45. Show "Thank You" page\n(NO page reload - smooth UX)
+                deactivate Browser
+            end
+        end
+        
+    else is_ajax_request() = FALSE
+        note right of Controller
+            Non-AJAX direct form submission
+            User submitted via HTML form
+            without AJAX (legacy behavior)
+        end note
+        
+        Controller -> Browser: 46. 403 Forbidden
+        deactivate Controller
+        activate Browser
+        Browser -> User: 47. Display error
+        deactivate Browser
+    end
+    
+    note left of Database
+        Database state after submission:
+        identitas_input_koleksi: +1 row (id_koleksi=42)
+        jawaban_koleksi: +85 rows (all answers)
+        Transaction ensures consistency
+    end note
+end
+
+' ════════════════════════════════════════════════════════════════════════════
+' FLOW 3: DATA RETRIEVAL (READ)
+' ════════════════════════════════════════════════════════════════════════════
+group Data Retrieval (List & Detail View)
+    
+    User -> Browser: 48. Open recap/list page\nGET /pendataan/rekap
+    activate Browser
+    
+    Browser -> Server: 49. GET /pendataan/rekap
+    activate Server
+    deactivate Browser
+    
+    Server -> Router: 50. Route GET /pendataan/rekap
+    activate Router
+    deactivate Server
+    
+    Router -> Controller: 51. Call rekap() method
+    activate Controller
+    deactivate Router
+    
+    note right of Controller
+        Check cache for years list
+        cache_key = 'pendataan/list_tahun'
+        TTL = 3600 seconds
+    end note
+    
+    Controller -> Controller: 52. Get available years\nfrom cache
+    activate Controller
+    deactivate Controller
+    
+    alt Cache hit
+        Controller -> Controller: 53. Return cached years
+        activate Controller
+        deactivate Controller
+    else Cache miss
+        Controller -> Model: 54. Fetch DISTINCT years\nSELECT DISTINCT(tahun_data) as tahun\nFROM identitas_input_koleksi\nORDER BY tahun_data DESC
+        activate Model
+        deactivate Controller
+        
+        Model -> Database: 55. Execute SELECT query
+        deactivate Model
+        activate Database
+        
+        Database --> Model: 56. Return years array\n[{tahun: 2026}, {tahun: 2025}, {tahun: 2024}]
+        deactivate Database
+        activate Model
+        
+        Model --> Controller: 57. Return data
+        deactivate Model
+        activate Controller
+        
+        Controller -> Controller: 58. Cache result\ncache.save('pendataan/list_tahun', data, 3600)
+        activate Controller
+        deactivate Controller
+    end
+    
+    note right of Controller
+        Load data to View template
+        Template: pendataan_rekap.php
+        Pass: list_tahun, other metadata
+    end note
+    
+    Controller -> Browser: 59. Render HTML view\n(with year dropdown, filter form)
+    deactivate Controller
+    activate Browser
+    
+    Browser -> User: 60. Display list page\n(ready for filtering)
+    deactivate Browser
+    
+    opt User clicks on specific record detail
+        
+        User -> Browser: 61. Click detail button\nfor id_koleksi=42
+        activate Browser
+        
+        Browser -> Server: 62. GET /pendataan/detail/42
+        activate Server
+        deactivate Browser
+        
+        Server -> Router: 63. Route to detail page
+        activate Router
+        deactivate Server
+        
+        Router -> Controller: 64. Call detail(id_koleksi=42)
+        activate Controller
+        deactivate Router
+        
+        note right of Controller
+            Check cache first
+            cache_key = 'pendataan/detail_42'
+            TTL = 3600 seconds
+        end note
+        
+        Controller -> Controller: 65. Try to load from cache
+        activate Controller
+        deactivate Controller
+        
+        alt Cache miss
+            
+            Controller -> Model: 66. Fetch identitas record\nSELECT * FROM identitas_input_koleksi\nWHERE id_koleksi=42
+            activate Model
+            deactivate Controller
+            
+            Model -> Database: 67. Execute SELECT
+            deactivate Model
+            activate Database
+            
+            Database --> Model: 68. Return identitas row\n{id_koleksi: 42, nomor_pokok: 'J4.1.1', tahun_data: 2026, ...}
+            deactivate Database
+            activate Model
+            
+            Model --> Controller: 69. Return identitas data
+            deactivate Model
+            activate Controller
+            
+            Controller -> Model: 70. Fetch all answers\nSELECT j.*, p.isi_pertanyaan, p.section\nFROM jawaban_koleksi j\nJOIN pertanyaan_koleksi p\nWHERE j.id_koleksi=42\nORDER BY p.section, p.urutan
+            activate Model
+            deactivate Controller
+            
+            Model -> Database: 71. Execute SELECT with JOIN
+            deactivate Model
+            activate Database
+            
+            Database --> Model: 72. Return 85 answer rows\n[{id_pertanyaan: 1, jawaban: 'J4.1.1', isi_pertanyaan: '...'},\n ... ]
+            deactivate Database
+            activate Model
+            
+            Model --> Controller: 73. Return answers array
+            deactivate Model
+            activate Controller
+            
+            note right of Controller
+                Sanitize output for XSS prevention
+                htmlspecialchars($value, ENT_QUOTES, 'UTF-8')
+                Group by section for display
+            end note
+            
+            Controller -> Controller: 74. Sanitize & group data
+            activate Controller
+            deactivate Controller
+            
+            Controller -> Controller: 75. Cache result\ncache.save('pendataan/detail_42', data, 3600)
+            activate Controller
+            deactivate Controller
+        end
+        
+        note right of Controller
+            Load detail view template
+            Template: pendataan_detail.php
+            Pass: identitas, jawaban_grouped, section_names
+        end note
+        
+        Controller -> Browser: 76. Render detail view\n(table with all Q&A)
+        deactivate Controller
+        activate Browser
+        
+        Browser -> User: 77. Display detail page
+        deactivate Browser
+    end
+    
+    note left of Database
+        SELECT queries are optimized with:
+        - Index on (id_koleksi)
+        - Index on (tahun_data)
+        - Composite index (tahun_data, tanggal_submit)
+    end note
+end
+
+' ════════════════════════════════════════════════════════════════════════════
+' FLOW 4: RECAP & STATISTICS (AJAX)
+' ════════════════════════════════════════════════════════════════════════════
+group Recap & Statistics (Charts & Aggregations)
+    
+    User -> Browser: 78. Page loads\n/pendataan/rekap
+    activate Browser
+    
+    note right of Browser
+        On page load, trigger AJAX call
+        to fetch chart statistics
+        via JavaScript (fetch API)
+    end note
+    
+    Browser -> Server: 79. GET /pendataan/get_chart_stats\n?tahun=2026&nomor_pokok=&date_from=&date_to=\n(X-Requested-With: XMLHttpRequest)
+    activate Server
+    deactivate Browser
+    
+    Server -> Router: 80. Route to get_chart_stats()
+    activate Router
+    deactivate Server
+    
+    Router -> Controller: 81. Call get_chart_stats() method
+    activate Controller
+    deactivate Router
+    
+    note right of Controller
+        Check AJAX request
+        Sanitize parameters:
+        - tahun (regex: YYYY format)
+        - nomor_pokok (alphanumeric + dash)
+        - date_from, date_to (regex: YYYY-MM-DD)
+    end note
+    
+    Controller -> Controller: 82. Validate & sanitize params\nxss_clean() + regex validation
+    activate Controller
+    deactivate Controller
+    
+    Controller -> Controller: 83. Check cache\ncache_key = 'chart_stats_v2_' . md5(...)\nTTL = 300 seconds (5 minutes)
+    activate Controller
+    deactivate Controller
+    
+    alt Cache hit
+        note right of Controller
+            Cache key includes all filter params
+            If same filters used again within 5 min
+            Return cached result
+        end note
+        
+        Controller -> Browser: 84. 200 OK (JSON)\n{stat_cards: {...}, koleksi_saat_ini: {...},\npertumbuhan: {...}, pengunjung: {...},\npemanfaatan: {...}, distribusi_jenis: {...}}
+        deactivate Controller
+        activate Browser
+        
+    else Cache miss
+        
+        note right of Controller
+            Execute aggregation queries
+            GROUP BY, COUNT, SUM operations
+            Multiple SELECT statements required
+        end note
+        
+        Controller -> Model: 85. Get total reports\nSELECT COUNT(*) as total\nFROM identitas_input_koleksi\nWHERE tahun_data=2026
+        activate Model
+        deactivate Controller
+        
+        Model -> Database: 86. COUNT(*) query
+        deactivate Model
+        activate Database
+        
+        Database --> Model: 87. Return {total: 1250}
+        deactivate Database
+        activate Model
+        
+        Model --> Controller: 88. total_laporan = 1250
+        deactivate Model
+        activate Controller
+        
+        Controller -> Model: 89. Aggregation: Sum by question\nSELECT SUM(CAST(j.jawaban AS UNSIGNED)) AS total\nFROM jawaban_koleksi j\nJOIN identitas_input_koleksi i\nWHERE j.id_pertanyaan=15\nAND i.tahun_data=2026\nAND j.jawaban REGEXP '^[0-9]+$'
+        activate Model
+        deactivate Controller
+        
+        note right of Model
+            For each numeric question ID:
+            15=Judul Tercetak, 16=Judul Digital,
+            17=Eksemplar Tercetak, 18=Eksemplar Digital
+            Call SUM aggregation
+        end note
+        
+        Model -> Database: 90. SUM aggregation
+        deactivate Model
+        activate Database
+        
+        Database --> Model: 91. Return {total: 5432100}
+        deactivate Database
+        activate Model
+        
+        Model --> Controller: 92. total_judul_tercetak = 5432100
+        deactivate Model
+        activate Controller
+        
+        loop For each chart (6 total)
+            note right of Controller
+                Chart 1: Current Collection (4 questions)
+                Chart 2: Growth 2025 vs 2026 (8 questions)
+                Chart 3: Visitors 2025 vs 2026 (6 questions)
+                Chart 4: Utilization 2025 vs 2026 (4 questions)
+                Chart 5: Distribution by type (GROUP BY)
+                Chart 6: Detail aggregations
+            end note
+            
+            Controller -> Model: 93. Execute chart query
+            activate Model
+            deactivate Controller
+            Model -> Database: 94. SELECT/SUM/GROUP BY
+            deactivate Model
+            activate Database
+            Database --> Model: 95. Return aggregated data
+            deactivate Database
+            activate Model
+            Model --> Controller: 96. Return to controller
+            deactivate Model
+            activate Controller
+        end
+        
+        note right of Controller
+            Assemble all chart data
+            into response object:
+            - stat_cards
+            - koleksi_saat_ini
+            - pertumbuhan
+            - pengunjung
+            - pemanfaatan
+            - distribusi_jenis
+        end note
+        
+        Controller -> Controller: 97. Compile response\nresult = { stat_cards: {...}, ... }
+        activate Controller
+        deactivate Controller
+        
+        Controller -> Controller: 98. Cache result\ncache.save(cache_key, result, 300)
+        activate Controller
+        deactivate Controller
+        
+        Controller -> Browser: 99. 200 OK (JSON)\nResponse with all charts
+        deactivate Controller
+        activate Browser
+    end
+    
+    note left of Browser
+        JavaScript processes JSON response
+        Initialize Chart.js or other library
+        Render 6 different chart visualizations
+    end note
+    
+    Browser -> Browser: 100. Parse JSON response\nInitialize chart.js instances
+    activate Browser
+    deactivate Browser
+    
+    Browser -> User: 101. Display 6 charts\n+ stat cards summary
+    activate Browser
+    deactivate Browser
+    
+    opt User applies filters (date range, reference number)
+        note right of User
+            User adjusts filter parameters
+            Form resubmitted via AJAX
+            Same flow repeats with new cache key
+        end note
+        
+        User -> Browser: 102. Change date range\nClick "Apply Filter"
+        activate Browser
+        
+        Browser -> Server: 103. GET /pendataan/get_chart_stats\n?tahun=2026&date_from=2026-01-01&date_to=2026-03-31
+        activate Server
+        deactivate Browser
+        
+        note right of Server
+            New cache_key due to different params
+            Cache miss -> new aggregation queries
+            Result cached for 5 minutes
+        end note
+        
+        ' Flow repeats (abbreviated for clarity)
+        Server -> Controller: 104. Process new filters...
+        deactivate Server
+        activate Controller
+        Controller -> Database: 105. Execute aggregations\nwith date filter...
+        deactivate Controller
+        activate Database
+        Database --> Browser: 106. Return filtered results
+        deactivate Database
+        activate Browser
+        Browser -> User: 107. Update charts\nwith filtered data
+        deactivate Browser
+    end
+    
+    note left of Database
+        Aggregation queries use:
+        - REGEXP for numeric validation
+        - SUM(CAST(...)) for totals
+        - GROUP BY for distributions
+        - JOIN for multi-table queries
+    end note
+end
+
+' ════════════════════════════════════════════════════════════════════════════
+' FLOW 5: REPORT / EXPORT
+' ════════════════════════════════════════════════════════════════════════════
+group Report Generation & Export
+    
+    User -> Browser: 108. Navigate to recap page\nApply filters, click "Export to CSV"
+    activate Browser
+    
+    note right of Browser
+        Export request includes:
+        - tahun (year)
+        - nomor_pokok (library ref)
+        - date_from, date_to (date range)
+        - sort_by (sort order)
+    end note
+    
+    Browser -> Server: 109. POST /pendataan/export_excel\n?tahun=2026&sort_by=tanggal_desc&...\n(Content-Type: application/x-www-form-urlencoded)
+    activate Server
+    deactivate Browser
+    
+    Server -> Router: 110. Route to export_excel()
+    activate Router
+    deactivate Server
+    
+    Router -> Controller: 111. Call export_excel() method
+    activate Controller
+    deactivate Router
+    
+    note right of Controller
+        Set time limit: 600 seconds (10 min)
+        Set memory: 512MB (handle large exports)
+        Check export rate limits
+    end note
+    
+    Controller -> Controller: 112. Set resource limits\nset_time_limit(600)\nini_set('memory_limit', '512M')
+    activate Controller
+    deactivate Controller
+    
+    Controller -> Controller: 113. Check export rate limit\n(3 per session, 20 per IP per hour)
+    activate Controller
+    deactivate Controller
+    
+    alt Rate limit exceeded
+        Controller -> Browser: 114. 403 Forbidden\n{error: "Too many export requests"}
+        deactivate Controller
+        activate Browser
+        Browser -> User: 115. Display error message
+        deactivate Browser
+        
+    else Rate limit OK
+        
+        note right of Controller
+            Sanitize & validate filter parameters
+            Build base WHERE clause
+            Count total records to export
+        end note
+        
+        Controller -> Model: 116. Count total records\nSELECT COUNT(*) \nFROM identitas_input_koleksi\nWHERE tahun_data=2026 AND ...
+        activate Model
+        deactivate Controller
+        
+        Model -> Database: 117. COUNT query
+        deactivate Model
+        activate Database
+        
+        Database --> Model: 118. Return {count: 1250}
+        deactivate Database
+        activate Model
+        
+        Model --> Controller: 119. total_records = 1250
+        deactivate Model
+        activate Controller
+        
+        alt No records to export
+            Controller -> Browser: 120. {error: "No data to export"}
+            deactivate Controller
+            activate Browser
+            Browser -> User: 121. Show error
+            deactivate Browser
+            
+        else Records exist
+            
+            note right of Controller
+                Fetch question list for column headers
+                Cache: 'pendataan/questions_export_list'
+                TTL: 1 day
+            end note
+            
+            Controller -> Model: 122. Get question list\nSELECT id_pertanyaan, isi_pertanyaan\nFROM pertanyaan_koleksi\nWHERE aktif=1\nORDER BY section, urutan
+            activate Model
+            deactivate Controller
+            
+            Model -> Database: 123. SELECT questions
+            deactivate Model
+            activate Database
+            
+            Database --> Model: 124. Return {id_pertanyaan, isi_pertanyaan} [100 rows]
+            deactivate Database
+            activate Model
+            
+            Model --> Controller: 125. Return question list
+            deactivate Model
+            activate Controller
+            
+            note right of Controller
+                Set HTTP headers for CSV download
+                Content-Type: text/csv
+                Content-Disposition: attachment
+                UTF-8 BOM for Excel compatibility
+            end note
+            
+            Controller -> Controller: 126. Set CSV headers\nheader('Content-Type: text/csv')\necho \"\\xEF\\xBB\\xBF\" (UTF-8 BOM)
+            activate Controller
+            deactivate Controller
+            
+            note right of Controller
+                Streaming export in chunks:
+                Process 50 records at a time
+                Write CSV rows directly to output
+                Flush buffer to prevent memory overflow
+            end note
+            
+            Controller -> Controller: 127. Write CSV header row\nID, Nomor Pokok, Tahun, Tanggal, [all questions]
+            activate Controller
+            deactivate Controller
+            
+            loop Process in chunks (50 records per iteration)
+                note right of Controller
+                    offset = 0, 50, 100, 150, ...
+                    Up to 1250 records = 25 iterations
+                end note
+                
+                Controller -> Model: 128. Fetch chunk (50 records)\nSELECT * FROM identitas_input_koleksi\nWHERE tahun_data=2026 AND ...\nLIMIT 50 OFFSET [offset]
+                activate Model
+                deactivate Controller
+                
+                Model -> Database: 129. SELECT chunk
+                deactivate Model
+                activate Database
+                
+                Database --> Model: 130. Return 50 identitas rows
+                deactivate Database
+                activate Model
+                
+                Model --> Controller: 131. Return data chunk
+                deactivate Model
+                activate Controller
+                
+                note right of Controller
+                    For each identitas row:
+                    Fetch all answers in bulk
+                    Map to question IDs
+                    Build CSV row with all values
+                end note
+                
+                Controller -> Model: 132. Fetch answers for chunk\nSELECT id_koleksi, id_pertanyaan, jawaban\nFROM jawaban_koleksi\nWHERE id_koleksi IN (42, 43, 44, ...) [50 IDs]
+                activate Model
+                deactivate Controller
+                
+                Model -> Database: 133. SELECT answers (bulk)
+                deactivate Model
+                activate Database
+                
+                Database --> Model: 134. Return answer rows\n[4250 rows = 50 * avg 85 answers]
+                deactivate Database
+                activate Model
+                
+                Model --> Controller: 135. Return answers
+                deactivate Model
+                activate Controller
+                
+                Controller -> Controller: 136. Build CSV rows\nFor each identitas row:\n  Map answers by id_pertanyaan\n  Sanitize values (prevent CSV injection)\n  Write fputcsv() to output
+                activate Controller
+                deactivate Controller
+                
+                Controller -> Controller: 137. Flush buffer\nob_flush(); flush()
+                activate Controller
+                deactivate Controller
+            end
+            
+            Controller -> Controller: 138. Close file handle\nfclose($output)
+            activate Controller
+            deactivate Controller
+            
+            Controller -> Controller: 139. Update export rate limit\ncache.save('export_limit_session_*', ...)\ncache.save('export_limit_ip_*', ...)
+            activate Controller
+            deactivate Controller
+            
+            note right of Browser
+                Browser receives streamed CSV file
+                Content-Disposition header triggers download
+                File saved to Downloads folder
+                Filename: rekap_pendataan_2026.csv
+            end note
+            
+            Controller -> Browser: 140. Stream CSV data\n(Content-Disposition: attachment)
+            deactivate Controller
+            activate Browser
+            
+            Browser -> User: 141. Download complete\nFile saved: rekap_pendataan_2026.csv
+            deactivate Browser
+            
+            note left of Browser
+                User can open in Excel/Google Sheets
+                CSV format: UTF-8 with BOM
+                Comma-delimited rows
+                1250 data rows + 1 header row
+            end note
+        end
+    end
+    
+    note left of Database
+        Streaming export strategy:
+        - No need to load all 1250+ records into memory
+        - Process 50 at a time
+        - Write directly to output
+        - Perfect for large datasets
+        - Time limit: 600 seconds
+        - Memory: 512MB fixed (not per-record)
+    end note
+end
+
+note over User, Database
+  CACHING STRATEGY SUMMARY:
+  ── 1 day ──────────────────────────────────────────────────────────────────
+  questions_v2 (all Q&A with options)
+  questions_export_list (for export headers)
+  
+  ── 1 hour ──────────────────────────────────────────────────────────────────
+  list_tahun (available years)
+  detail_* (individual submission details)
+  rate_limit_* (rate limit counters per session/IP)
+  
+  ── 5 minutes ────────────────────────────────────────────────────────────────
+  rekap_* (recap list with filters/sorting)
+  chart_stats_v2_* (aggregated statistics)
+  
+  ── 30 seconds ───────────────────────────────────────────────────────────────
+  double_submit_* (prevent double submission)
+end note
+
+@enduml

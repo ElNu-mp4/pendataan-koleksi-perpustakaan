@@ -1,0 +1,149 @@
+﻿@startuml
+skinparam sequenceMessageAlign center
+skinparam backgroundColor #FEFEFE
+skinparam ParticipantBackgroundColor #E8F4F8
+skinparam ArrowColor #333333
+skinparam ActorBackgroundColor #FFE6CC
+
+title SD-06 - Admin Login Flow
+
+actor Administrator
+participant Browser
+participant Server
+participant Router
+participant Controller
+participant Model
+database Database
+
+Administrator -> Browser: 1. Navigate to admin login\nGET /administrator
+activate Browser
+
+Browser -> Server: 2. GET /administrator
+activate Server
+deactivate Browser
+
+Server -> Router: 3. Route to Administrator controller
+activate Router
+deactivate Server
+
+Router -> Controller: 4. Call index() method
+activate Controller
+deactivate Router
+
+note right of Controller
+    Setup login form:
+    - Generate captcha
+    - Load login template
+    - Check for existing session
+end note
+
+Controller -> Browser: 5. Render login template\n(template().'/administrator/login', $data)
+activate Browser
+
+Browser -> Administrator: 6. Display login form\nwith captcha
+deactivate Browser
+
+Administrator -> Browser: 7. Enter credentials and submit\nPOST /administrator/index
+activate Browser
+
+Browser -> Server: 8. POST /administrator/index\n(username, password, captcha)
+activate Server
+deactivate Browser
+
+Server -> Router: 9. Route to Administrator controller index()
+activate Router
+deactivate Server
+
+Router -> Controller: 10. Call index() method (POST)
+activate Controller
+deactivate Router
+
+note right of Controller
+    Validate form submission:
+    - Check required fields
+    - Verify captcha
+    - Hash password with MD5
+end note
+
+Controller -> Model: 11. login($username, md5($password))
+activate Model
+
+Model -> Database: 12. SELECT * FROM users\nWHERE username = '$username'\nAND password = MD5('$password')
+activate Database
+deactivate Model
+
+Database --> Model: 13. Return user data or empty
+deactivate Database
+activate Model
+
+Model --> Controller: 14. Return user data
+deactivate Model
+activate Controller
+
+alt Login successful
+    note right of Controller
+        Set session data:
+        - Store user info in session
+        - Set login status
+        - Redirect to admin dashboard
+    end note
+
+    Controller -> Browser: 15. redirect('administrator/home')
+    activate Browser
+
+    Browser -> Server: 16. GET /administrator/home
+    activate Server
+    deactivate Browser
+
+    Server -> Router: 17. Route to Administrator controller home()
+    activate Router
+    deactivate Server
+
+    Router -> Controller: 18. Call home() method
+    activate Controller
+    deactivate Router
+
+    note right of Controller
+        Load dashboard data:
+        - User modules/permissions
+        - System statistics
+        - Recent activities
+    end note
+
+    Controller -> Model: 19. view_where('users',['username'=>$session_username])
+    activate Model
+
+    Model -> Database: 20. SELECT * FROM users\nWHERE username = '$session_username'
+    activate Database
+    deactivate Model
+
+    Database --> Model: 21. Return user data
+    deactivate Database
+    activate Model
+
+    Model --> Controller: 22. Return user data
+    deactivate Model
+    activate Controller
+
+    Controller -> Browser: 23. Render dashboard template\n(template().'/administrator/home', $data)
+    activate Browser
+
+    Browser -> Administrator: 24. Display admin dashboard
+    deactivate Browser
+
+else Login failed
+    note right of Controller
+        Handle login failure:
+        - Set error message
+        - Regenerate captcha
+        - Reload login form
+    end note
+
+    Controller -> Browser: 25. Render login template\nwith error message
+    activate Browser
+
+    Browser -> Administrator: 26. Display login form\nwith error message
+    deactivate Browser
+end
+
+@enduml

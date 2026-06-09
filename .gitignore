@@ -1,0 +1,55 @@
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+nbproject/
+
+# Dependencies
+/vendor/
+composer.lock
+
+# Local environment / secrets
+.env
+.env.*
+
+# CodeIgniter runtime artifacts
+application/cache/*
+!application/cache/index.html
+!application/cache/.htaccess
+
+application/logs/*
+!application/logs/index.html
+!application/logs/.htaccess
+
+# Uploads and generated media
+asset/files/
+asset/foto_berita/
+asset/foto_agenda/
+asset/foto_banner/
+asset/foto_iklanatas/
+asset/foto_iklantengah/
+asset/foto_info/
+asset/foto_link/
+asset/foto_pasangiklan/
+asset/foto_statis/
+asset/foto_user/
+temp_docx/
+
+# Local database / backups
+DATABASE/*.sql
+DATABASE/*.bak
+DATABASE/*.zip
+
+# Temporary files
+*.log
+*.tmp
+*.swp
+*.swo
+
+# Editor / tool caches
+*.tmlanguage.cache
+*.tmPreferences.cache
+*.stTheme.cache
+*.sublime-workspace
+*.sublime-project

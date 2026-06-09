@@ -1,0 +1,81 @@
+@startuml System Activity Diagram - Pendataan Perpustakaan
+
+title Activity Diagram Sistem Pendataan Koleksi Perpustakaan
+
+start
+
+:User/Admin mengakses aplikasi;
+
+if (Pilih peran?) then (User)
+  :Buka halaman utama;
+  if (Pilih aksi?) then (Survey)
+    :Melihat form pendataan;
+    :Mengisi data koleksi (pertanyaan dinamis);
+    :Submit form;
+    if (Validasi form?) then (Valid)
+      :Simpan ke database (identitas_input_koleksi, jawaban_koleksi);
+      :Tampilkan halaman terima kasih;
+    else (Invalid)
+      :Tampilkan error dan kembali ke form;
+    endif
+  else (Rekap)
+    :Tampilkan halaman rekap dengan filter;
+    :Load data tahun dari database;
+    :User pilih filter (tahun, nomor, tanggal);
+    :AJAX request ke get_chart_stats;
+    :Query agregat chart dari jawaban_koleksi;
+    if (Data chart ada?) then (Ya)
+      :Render 5 chart (Chart.js): koleksi, pertumbuhan, pengunjung, pemanfaatan, jenis;
+      :Tampilkan stat cards;
+    else (Tidak)
+      :Tampilkan pesan tidak ada data;
+    endif
+    :AJAX request ke get_rekap_data;
+    :Query tabel data dengan pagination dan sorting;
+    :Render tabel data dengan pagination;
+    :User bisa refresh atau ubah filter;
+    note right
+      Loop: Ulangi load data jika diperlukan
+    end note
+  endif
+else (Admin)
+  :Buka halaman login admin;
+  :Masukkan kredensial;
+  if (Login valid?) then (Ya)
+    :Tampilkan dashboard admin;
+    if (Pilih menu?) then (Manajemen Pendataan)
+      :Tampilkan daftar laporan pendataan;
+      if (Aksi?) then (Tambah)
+        :Tampilkan form tambah pendataan;
+        :Admin isi form;
+        :Simpan data baru;
+        :Redirect ke daftar;
+      elseif (Edit)
+        :Load data existing;
+        :Tampilkan form edit;
+        :Admin ubah data;
+        :Update database;
+        :Redirect ke daftar;
+      elseif (Hapus)
+        :Konfirmasi hapus;
+        :Delete data dari database;
+        :Redirect ke daftar;
+      elseif (Detail)
+        :Tampilkan detail pendataan;
+      else (Kembali)
+        :Kembali ke dashboard;
+      endif
+    elseif (Debug Pendataan)
+      :Verifikasi level admin;
+      :Tampilkan halaman debug pendataan;
+    else (Lainnya)
+      :Akses menu lain (berita, halaman, dll.);
+    endif
+  else (Tidak)
+    :Tampilkan pesan login gagal;
+  endif
+endif
+
+stop
+
+@enduml

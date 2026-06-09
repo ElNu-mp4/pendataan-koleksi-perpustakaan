@@ -1,0 +1,131 @@
+﻿@startuml
+skinparam sequenceMessageAlign center
+skinparam backgroundColor #FEFEFE
+skinparam ParticipantBackgroundColor #E8F4F8
+skinparam ArrowColor #333333
+skinparam ActorBackgroundColor #FFE6CC
+
+title SD-03 - Agenda Browsing Flow
+
+actor Visitor
+participant Browser
+participant Server
+participant Router
+participant Controller
+participant Model
+database Database
+
+Visitor -> Browser: 1. Navigate to agenda page\nGET /agenda
+activate Browser
+
+Browser -> Server: 2. GET /agenda
+activate Server
+deactivate Browser
+
+Server -> Router: 3. Route to Agenda controller
+activate Router
+deactivate Server
+
+Router -> Controller: 4. Call index() method
+activate Controller
+deactivate Router
+
+note right of Controller
+    Setup pagination:
+    - Count total agenda items
+    - Configure pagination library
+    - Handle URI segments for pagination
+end note
+
+Controller -> Model: 5. view('agenda')->num_rows()
+activate Model
+
+Model -> Database: 6. SELECT COUNT(*) FROM agenda
+activate Database
+
+Database --> Model: 7. Return total count
+deactivate Database
+
+Model --> Controller: 8. Return total count
+deactivate Model
+
+Controller -> Model: 9. view_join('agenda','users','username','id_agenda','DESC',$offset,15)
+activate Model
+
+Model -> Database: 10. SELECT agenda.*, users.username\nFROM agenda\nJOIN users ON agenda.username = users.username\nORDER BY agenda.id_agenda DESC\nLIMIT 15 OFFSET $offset
+activate Database
+
+Database --> Model: 11. Return paginated agenda
+deactivate Database
+
+Model --> Controller: 12. Return agenda data
+deactivate Model
+
+Controller -> Browser: 13. Render template\n(template().'/template', template().'/agenda', $data)
+activate Browser
+
+Browser -> Visitor: 14. Display agenda list\nwith pagination
+deactivate Browser
+
+opt User clicks agenda detail
+    Visitor -> Browser: 15. Click agenda title\nGET /agenda/detail/agenda-seo-slug
+    activate Browser
+
+    Browser -> Server: 16. GET /agenda/detail/agenda-seo-slug
+    activate Server
+    deactivate Browser
+
+    Server -> Router: 17. Route to Agenda controller detail()
+    activate Router
+    deactivate Server
+
+    Router -> Controller: 18. Call detail() method
+    activate Controller
+    deactivate Router
+
+    Controller -> Model: 19. view_join_one('agenda','users','username',['tema_seo'=>$seo],'id_agenda','DESC',0,1)
+    activate Model
+
+    Model -> Database: 20. SELECT agenda.*, users.username\nFROM agenda\nJOIN users ON agenda.username = users.username\nWHERE agenda.tema_seo = '$seo'\nORDER BY agenda.id_agenda DESC LIMIT 1
+    activate Database
+
+    Database --> Model: 21. Return agenda detail
+    deactivate Database
+
+    Model --> Controller: 22. Return agenda data
+    deactivate Model
+
+    alt Agenda found
+        note right of Controller
+            Update read counter:
+            - Increment dibaca field
+            - Prepare view data
+        end note
+
+        Controller -> Model: 23. update('agenda', ['dibaca'=>$dibaca+1], ['id_agenda'=>$id])
+        activate Model
+
+        Model -> Database: 24. UPDATE agenda SET dibaca = dibaca + 1\nWHERE id_agenda = $id
+        activate Database
+
+        Database --> Model: 25. Update successful
+        deactivate Database
+
+        Model --> Controller: 26. Return update result
+        deactivate Model
+
+        Controller -> Browser: 27. Render detail template\n(template().'/template', template().'/detailagenda', $data)
+        activate Browser
+
+        Browser -> Visitor: 28. Display agenda detail
+        deactivate Browser
+
+    else Agenda not found
+        Controller -> Browser: 29. redirect('main')
+        activate Browser
+        Browser -> Visitor: 30. Redirect to homepage
+        deactivate Browser
+    end
+end
+
+@enduml

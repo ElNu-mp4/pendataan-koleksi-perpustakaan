@@ -1,0 +1,68 @@
+@startuml Sequence Diagram - Pendataan Full Flow
+
+title Sequence Diagram: Pendataan Submission and Rekap Dashboard
+
+actor User
+participant Browser
+participant PendataanController
+participant Cache
+database MySQL
+
+== Survey Submission Flow ==
+User -> Browser: Open /pendataan
+Browser -> PendataanController: GET /pendataan
+PendataanController -> Cache: get('pendataan/questions_with_options_v2')
+Cache --> PendataanController: cache miss/expired
+PendataanController -> MySQL: SELECT * FROM pertanyaan_koleksi WHERE aktif=1 ORDER BY section, urutan
+MySQL --> PendataanController: questions
+PendataanController -> MySQL: SELECT * FROM opsi_pertanyaan_koleksi WHERE id_pertanyaan IN (...) AND aktif=1 ORDER BY id_pertanyaan, urutan
+MySQL --> PendataanController: option rows
+PendataanController -> Cache: save('pendataan/questions_with_options_v2', questions)
+PendataanController -> Browser: Render form page with questions and options
+Browser -> User: Show survey form
+
+User -> Browser: Submit survey form
+Browser -> PendataanController: POST /pendataan/submit
+PendataanController -> PendataanController: validate honeypot, rate limit, duplicate submission
+PendataanController -> MySQL: START TRANSACTION
+PendataanController -> MySQL: INSERT INTO identitas_input_koleksi
+MySQL --> PendataanController: new id_koleksi
+loop for each answer
+  PendataanController -> MySQL: INSERT INTO jawaban_koleksi
+  MySQL --> PendataanController: insert success
+end
+PendataanController -> MySQL: UPDATE identitas_input_koleksi SET nomor_pokok...
+MySQL --> PendataanController: update success
+PendataanController -> MySQL: COMMIT
+PendataanController -> Cache: clear_submission_cache()
+PendataanController -> Browser: Redirect /pendataan/terima_kasih
+Browser -> User: Success / thank you page
+
+== Rekap Dashboard Flow ==
+User -> Browser: Open /pendataan/rekap
+Browser -> PendataanController: GET /pendataan/rekap
+PendataanController -> Cache: get('pendataan/list_tahun')
+Cache --> PendataanController: cache miss/expired
+PendataanController -> MySQL: SELECT DISTINCT(tahun_data) FROM identitas_input_koleksi ORDER BY tahun_data DESC
+MySQL --> PendataanController: year list
+PendataanController -> Cache: save('pendataan/list_tahun', years)
+PendataanController -> Browser: Render rekap page with year filter
+Browser -> User: Show rekap dashboard
+
+Browser -> PendataanController: AJAX GET /pendataan/get_chart_stats?tahun=...&nomor_pokok=...&date_from=...&date_to=...
+PendataanController -> MySQL: COUNT(*) FROM identitas_input_koleksi WHERE tahun_data=...
+PendataanController -> MySQL: SUM(CAST(jawaban AS UNSIGNED)) for question ids 15,16,17,18,19..26,31..37,45..50
+PendataanController -> MySQL: SELECT j.jawaban, o.label_opsi, COUNT(*) FROM jawaban_koleksi j JOIN identitas_input_koleksi i ... WHERE j.id_pertanyaan=4 GROUP BY j.jawaban
+MySQL --> PendataanController: chart data
+PendataanController -> Browser: JSON { stat_cards, koleksi_saat_ini, pertumbuhan, pengunjung, pemanfaatan, distribusi_jenis }
+Browser -> Browser: render Chart.js charts and stat cards
+Browser -> Browser: show 5 chart widgets (bar + grouped bar + donut)
+
+Browser -> PendataanController: AJAX GET /pendataan/get_rekap_data?page=...&per_page=...&tahun=...&nomor_pokok=...&date_from=...&date_to=...&sort_by=...
+PendataanController -> MySQL: SELECT i.id_koleksi, i.nomor_pokok, i.tahun_data, i.tanggal_submit, COUNT(j.id_jawaban) FROM identitas_input_koleksi i LEFT JOIN jawaban_koleksi j ... GROUP BY i.id_koleksi ORDER BY ... LIMIT ...
+MySQL --> PendataanController: table rows
+PendataanController -> Browser: JSON { data, total, page, per_page, total_pages }
+Browser -> Browser: render table, pagination, bulk selection controls
+Browser -> User: allow filtering / export / detail view
+
+@enduml

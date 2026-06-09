@@ -1,0 +1,51 @@
+@startuml BPMN - Admin Survey Management (Detailed)
+
+title Admin Survey Management Process
+
+start
+
+:Admin logs in (users table);
+
+:Validate credentials and level;
+
+if (Has pendataan access via users_modul?) then (yes)
+
+  fork
+    :Manage Questions;
+    :Access pertanyaan_koleksi CRUD;
+    :Create new question (section, tipe_jawaban, wajib);
+    :Edit existing questions;
+    :Delete questions (cascade to jawaban_koleksi);
+    :Manage Options (opsi_pertanyaan_koleksi);
+    :Add/edit/delete options for radio/checkbox/select;
+  fork again
+    :Configure Survey;
+    :Edit config_pendataan;
+    :Set tahun_aktif;
+    :Toggle status_pendataan (aktif/nonaktif);
+    :Update pesan_nonaktif;
+    :Save configuration;
+  fork again
+    :View Results;
+    :Query identitas_input_koleksi with filters;
+    :Join jawaban_koleksi for answers;
+    :Group by id_koleksi;
+    :Display rekap table;
+    :Export to CSV/Excel;
+    :View individual submissions;
+  fork again
+    :User Management;
+    :Manage users table;
+    :Assign modul permissions (users_modul);
+    :Reset passwords;
+  end fork
+
+else (no)
+  :Show access denied;
+endif
+
+:Logout and clear session;
+
+stop
+
+@enduml

@@ -1,0 +1,176 @@
+﻿@startuml
+skinparam sequenceMessageAlign center
+skinparam backgroundColor #FEFEFE
+skinparam ParticipantBackgroundColor #E8F4F8
+skinparam ArrowColor #333333
+skinparam ActorBackgroundColor #FFE6CC
+
+title SD-10 - Library Data Recap Flow
+
+actor "Operator Perpustakaan" as User
+participant Browser
+participant Server
+participant "Pendataan\nController" as Controller
+participant "Model_app" as Model
+database "MySQL" as Database
+
+User -> Browser: 1. Akses halaman rekap\nGET /pendataan/rekap
+activate Browser
+
+Browser -> Server: 2. GET /pendataan/rekap
+activate Server
+
+Server -> Controller: 3. rekap()
+activate Controller
+
+Controller -> Database: 4. Cek file cache\npendataan/list_tahun
+activate Database
+Database --> Controller: 5. Cache miss
+deactivate Database
+
+Controller -> Database: 6. SELECT DISTINCT(tahun_data) as tahun\nFROM identitas_input_koleksi\nORDER BY tahun_data DESC
+activate Database
+Database --> Controller: 7. Return list tahun
+deactivate Database
+
+note right of Controller
+    Simpan ke cache
+    Key: pendataan/list_tahun
+    TTL: 3600 detik
+end note
+
+Controller -> Browser: 8. Render view pendataan_rekap\n(list tahun untuk dropdown filter)
+deactivate Controller
+Browser -> User: 9. Tampilkan halaman rekap\n(tabel kosong, filter, chart containers)
+deactivate Server
+
+note over Browser
+    Browser auto-load:
+    loadData(1) dan loadChartData()
+    via JavaScript onload
+end note
+
+Browser -> Server: 10. AJAX GET /pendataan/get_rekap_data\n?page=1&per_page=10&tahun=...&sort_by=tanggal_desc\nHeader: X-Requested-With: XMLHttpRequest
+activate Server
+
+Server -> Controller: 11. get_rekap_data()
+activate Controller
+
+note right of Controller
+    Sanitasi parameter:
+    - tahun: validasi format (19|20)\d{2}
+    - nomor_pokok: strip non-alphanumeric
+    - date_from/to: validasi YYYY-MM-DD
+    - sort_by: whitelist allowed_sorts
+end note
+
+Controller -> Database: 12. Cek file cache\npendataan/rekap_{filter_hash}_page_{n}
+activate Database
+Database --> Controller: 13. Cache miss
+deactivate Database
+
+Controller -> Database: 14. SELECT COUNT(*)\nFROM identitas_input_koleksi i\nWHERE i.tahun_data = {tahun}\n[AND i.nomor_pokok LIKE ...]\n[AND DATE(i.tanggal_submit) >= ...]\n[AND DATE(i.tanggal_submit) <= ...]
+activate Database
+Database --> Controller: 15. Return total_records
+deactivate Database
+
+Controller -> Database: 16. SELECT i.id_koleksi, i.nomor_pokok,\ni.tahun_data, i.tanggal_submit,\nCOUNT(j.id_jawaban) as jumlah_jawaban\nFROM identitas_input_koleksi i\nLEFT JOIN jawaban_koleksi j\n  ON i.id_koleksi = j.id_koleksi\nWHERE ...\nGROUP BY i.id_koleksi\nORDER BY {sort_col} {sort_dir}\nLIMIT {per_page} OFFSET {offset}
+activate Database
+Database --> Controller: 17. Return paginated data
+deactivate Database
+
+note right of Controller
+    Simpan ke cache
+    Key: rekap_{filter_hash}_page_{n}
+    TTL: 300 detik
+    Output: htmlspecialchars nomor_pokok
+end note
+
+Controller -> Browser: 18. Return JSON\n{data, total, page, per_page, total_pages}
+deactivate Controller
+deactivate Server
+
+Browser -> User: 19. Render tabel rekap\ndengan pagination
+
+opt User mengubah filter atau sort
+    User -> Browser: 20. Ubah tahun / nomor pokok /\ntanggal / sort → klik Filter
+    Browser -> Server: 21. AJAX GET /pendataan/get_rekap_data\n(parameter filter baru)
+    activate Server
+    Server -> Controller: 22. get_rekap_data()
+    activate Controller
+    note right of Controller
+        Proses sama dengan langkah 11-17
+        dengan parameter filter baru
+    end note
+    Controller -> Browser: 23. Return JSON data terfilter
+    deactivate Controller
+    deactivate Server
+    Browser -> User: 24. Update tabel dan pagination
+end
+
+opt User klik Export ke Excel
+    User -> Browser: 25. Klik tombol Export
+    Browser -> Server: 26. GET /pendataan/export_excel\n(filter aktif sebagai query string)
+    activate Server
+    Server -> Controller: 27. export_excel()
+    activate Controller
+
+    note right of Controller
+        Cek export rate limit:
+        - session: max 3x per jam
+        - IP: max 20x per jam
+    end note
+
+    alt Rate limit export terlampaui
+        Controller -> Browser: 28a. set_flashdata error\nredirect('pendataan/rekap')
+        Browser -> User: 29a. Halaman rekap dengan\npesan rate limit
+    else Rate limit aman
+        Controller -> Database: 28b. SELECT COUNT(*) untuk validasi
+        activate Database
+        Database --> Controller: 29b. Return total
+        deactivate Database
+
+        alt Tidak ada data
+            Controller -> Browser: 30a. set_flashdata error\nredirect('pendataan/rekap')
+            Browser -> User: 31a. Pesan "tidak ada data untuk diekspor"
+        else Ada data
+            Controller -> Database: 30b. SELECT id_pertanyaan, isi_pertanyaan\nFROM pertanyaan_koleksi\nWHERE aktif = 1\nORDER BY section, urutan
+            activate Database
+            Database --> Controller: 31b. Return daftar pertanyaan (header CSV)
+            deactivate Database
+
+            note right of Controller
+                Set HTTP headers:
+                Content-Type: text/csv; charset=utf-8
+                Content-Disposition: attachment; filename=rekap_...csv
+                Output UTF-8 BOM (\xEF\xBB\xBF)
+            end note
+
+            loop Setiap chunk 50 record
+                Controller -> Database: 32. SELECT i.*\nFROM identitas_input_koleksi i\nWHERE ...\nORDER BY ...\nLIMIT 50 OFFSET {offset}
+                activate Database
+                Database --> Controller: 33. Return chunk identitas
+                deactivate Database
+
+                Controller -> Database: 34. SELECT id_koleksi, id_pertanyaan, jawaban\nFROM jawaban_koleksi\nWHERE id_koleksi IN (...)
+                activate Database
+                Database --> Controller: 35. Return jawaban chunk
+                deactivate Database
+
+                Controller -> Browser: 36. Stream CSV rows ke output\n(fputcsv + ob_flush + flush)
+            end
+
+            Controller -> Browser: 37. fclose(output); exit
+            note right of Controller
+                Update export rate limit counter:
+                - session TTL 3600
+                - IP TTL 3600
+            end note
+        end
+    end
+    deactivate Controller
+    deactivate Server
+    Browser -> User: 38. Download file CSV\n(rekap_pendataan_{tahun}.csv)
+end
+
+@enduml

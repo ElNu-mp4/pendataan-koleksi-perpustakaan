@@ -1,0 +1,218 @@
+﻿@startuml
+skinparam sequenceMessageAlign center
+skinparam backgroundColor #FEFEFE
+skinparam ParticipantBackgroundColor #E8F4F8
+skinparam ArrowColor #333333
+skinparam ActorBackgroundColor #FFE6CC
+
+title SD-12 - Admin Pendataan Management Flow
+
+actor "Administrator" as Admin
+participant Browser
+participant Server
+participant "Administrator\nController" as Controller
+database "MySQL" as Database
+
+note over Admin, Database
+    SD-12 mencakup seluruh operasi CRUD pendataan
+    yang dilakukan administrator melalui panel admin.
+    Akses dikontrol via cek_session_akses('pendataan', id_session).
+end note
+
+Admin -> Browser: 1. Akses panel pendataan\nGET /administrator/pendataan
+activate Browser
+
+Browser -> Server: 2. GET /administrator/pendataan
+activate Server
+
+Server -> Controller: 3. pendataan()
+activate Controller
+
+note right of Controller
+    cek_session_akses('pendataan', id_session)
+    → query users_modul
+    → redirect jika tidak punya akses
+end note
+
+Controller -> Database: 4. SELECT * FROM config_pendataan WHERE id = 1
+activate Database
+Database --> Controller: 5. Return config (tahun_aktif, status)
+deactivate Database
+
+Controller -> Database: 6. SELECT i.*,\nCOUNT(j.id_jawaban) as jumlah_jawaban\nFROM identitas_input_koleksi i\nLEFT JOIN jawaban_koleksi j\n  ON i.id_koleksi = j.id_koleksi\nWHERE i.tahun_data = {tahun}\n[AND i.nomor_pokok LIKE ...]\nGROUP BY i.id_koleksi\nORDER BY i.tanggal_submit DESC
+activate Database
+Database --> Controller: 7. Return daftar submission
+deactivate Database
+
+Controller -> Database: 8. SELECT jawaban FROM jawaban_koleksi\nWHERE id_koleksi = {id}\nAND id_pertanyaan = 2\n(untuk nama perpustakaan per record)
+activate Database
+Database --> Controller: 9. Return nama perpustakaan
+deactivate Database
+
+Controller -> Database: 10. SELECT DISTINCT(tahun_data)\nFROM identitas_input_koleksi\nORDER BY tahun_data DESC
+activate Database
+Database --> Controller: 11. Return list tahun
+deactivate Database
+
+Controller -> Browser: 12. Render view_pendataan\n(tabel data, filter, config info)
+deactivate Controller
+Browser -> Admin: 13. Tampilkan daftar submission
+deactivate Server
+
+alt Admin konfigurasi periode pendataan
+    Admin -> Browser: 14. Akses config pendataan\nPOST /administrator/config_pendataan
+    activate Browser
+    Browser -> Server: 15. POST (tahun_aktif, status_pendataan, pesan_nonaktif)
+    activate Server
+    Server -> Controller: 16. config_pendataan()
+    activate Controller
+    Controller -> Database: 17. UPDATE config_pendataan\nSET tahun_aktif, status_pendataan, pesan_nonaktif\nWHERE id = 1
+    activate Database
+    Database --> Controller: 18. Update success
+    deactivate Database
+    Controller -> Browser: 19. set_flashdata success\nredirect('administrator/pendataan')
+    deactivate Controller
+    deactivate Server
+    Browser -> Admin: 20. Halaman pendataan dengan notifikasi sukses
+    deactivate Browser
+end
+
+alt Admin input data manual
+    Admin -> Browser: 21. Akses tambah pendataan\nGET /administrator/tambah_pendataan
+    activate Browser
+    Browser -> Server: 22. GET /administrator/tambah_pendataan
+    activate Server
+    Server -> Controller: 23. tambah_pendataan()
+    activate Controller
+    Controller -> Database: 24. SELECT * FROM pertanyaan_koleksi\nWHERE aktif = 1\nORDER BY section ASC, urutan ASC
+    activate Database
+    Database --> Controller: 25. Return pertanyaan
+    deactivate Database
+    Controller -> Database: 26. SELECT * FROM opsi_pertanyaan_koleksi\nWHERE id_pertanyaan IN (...)\nAND aktif = 1 ORDER BY urutan ASC
+    activate Database
+    Database --> Controller: 27. Return opsi
+    deactivate Database
+    Controller -> Browser: 28. Render view_pendataan_tambah
+    deactivate Controller
+    deactivate Server
+    Browser -> Admin: 29. Tampilkan formulir input manual
+    deactivate Browser
+
+    Admin -> Browser: 30. Submit formulir\nPOST /administrator/tambah_pendataan
+    activate Browser
+    Browser -> Server: 31. POST (tahun_data, pertanyaan[])
+    activate Server
+    Server -> Controller: 32. tambah_pendataan() POST
+    activate Controller
+    Controller -> Database: 33. BEGIN TRANSACTION
+    activate Database
+    Controller -> Database: 34. INSERT INTO identitas_input_koleksi\n(nomor_pokok='-', tahun_data, ip_address, session_id)
+    Database --> Controller: 35. Return id_koleksi
+    deactivate Database
+    Controller -> Database: 36. INSERT jawaban_koleksi per pertanyaan\n(id_koleksi, id_pertanyaan, jawaban)
+    activate Database
+    Database --> Controller: 37. Insert success
+    deactivate Database
+    Controller -> Database: 38. UPDATE identitas_input_koleksi\nSET nomor_pokok = jawaban[id_pertanyaan=1]\nWHERE id_koleksi = {id}
+    activate Database
+    Database --> Controller: 39. Update success
+    deactivate Database
+    alt trans_status FALSE
+        Controller -> Database: 40a. ROLLBACK
+        Controller -> Browser: 41a. redirect('administrator/tambah_pendataan')
+    else trans_status OK
+        Controller -> Database: 40b. COMMIT
+        deactivate Database
+        Controller -> Browser: 41b. redirect('administrator/pendataan')
+    end
+    deactivate Controller
+    deactivate Server
+    Browser -> Admin: 42. Kembali ke daftar pendataan
+    deactivate Browser
+end
+
+alt Admin edit data
+    Admin -> Browser: 43. Klik edit → GET /administrator/edit_pendataan/{id}
+    activate Browser
+    Browser -> Server: 44. GET request
+    activate Server
+    Server -> Controller: 45. edit_pendataan() GET
+    activate Controller
+    Controller -> Database: 46. SELECT * FROM identitas_input_koleksi\nWHERE id_koleksi = {id}
+    activate Database
+    Database --> Controller: 47. Return identitas
+    deactivate Database
+    Controller -> Database: 48. SELECT id_pertanyaan, jawaban\nFROM jawaban_koleksi WHERE id_koleksi = {id}
+    activate Database
+    Database --> Controller: 49. Return jawaban existing
+    deactivate Database
+    Controller -> Browser: 50. Render view_pendataan_edit\n(formulir terisi jawaban sebelumnya)
+    deactivate Controller
+    deactivate Server
+    Browser -> Admin: 51. Formulir edit dengan data terpopulasi
+    deactivate Browser
+
+    Admin -> Browser: 52. Submit perubahan\nPOST /administrator/edit_pendataan/{id}
+    activate Browser
+    Browser -> Server: 53. POST (tahun_data, pertanyaan[])
+    activate Server
+    Server -> Controller: 54. edit_pendataan() POST
+    activate Controller
+    Controller -> Database: 55. BEGIN TRANSACTION
+    activate Database
+    Controller -> Database: 56. UPDATE identitas_input_koleksi\nSET tahun_data WHERE id_koleksi = {id}
+    Database --> Controller: 57. Update success
+    Controller -> Database: 58. DELETE FROM jawaban_koleksi\nWHERE id_koleksi = {id}
+    Database --> Controller: 59. Delete success
+    Controller -> Database: 60. INSERT jawaban_koleksi (jawaban baru)
+    Database --> Controller: 61. Insert success
+    Controller -> Database: 62. UPDATE nomor_pokok dari jawaban[1]
+    Database --> Controller: 63. Update success
+    deactivate Database
+    alt trans_status FALSE
+        Controller -> Database: 64a. ROLLBACK
+        Controller -> Browser: 65a. redirect('administrator/edit_pendataan/{id}')
+    else trans_status OK
+        Controller -> Database: 64b. COMMIT
+        deactivate Database
+        Controller -> Browser: 65b. redirect('administrator/pendataan')
+    end
+    deactivate Controller
+    deactivate Server
+    Browser -> Admin: 66. Kembali ke daftar pendataan
+    deactivate Browser
+end
+
+alt Admin hapus data
+    Admin -> Browser: 67. Klik hapus\nGET /administrator/delete_pendataan/{id}
+    activate Browser
+    Browser -> Server: 68. GET request
+    activate Server
+    Server -> Controller: 69. delete_pendataan()
+    activate Controller
+    Controller -> Database: 70. BEGIN TRANSACTION
+    activate Database
+    Controller -> Database: 71. DELETE FROM jawaban_koleksi\nWHERE id_koleksi = {id}
+    Database --> Controller: 72. Delete success
+    Controller -> Database: 73. DELETE FROM identitas_input_koleksi\nWHERE id_koleksi = {id}
+    Database --> Controller: 74. Delete success
+    deactivate Database
+    alt trans_status FALSE
+        Controller -> Database: 75a. ROLLBACK
+        Controller -> Browser: 76a. set_flashdata error\nredirect('administrator/pendataan')
+    else trans_status OK
+        Controller -> Database: 75b. COMMIT
+        deactivate Database
+        note right of Controller
+            Hapus cache detail:
+            cache->delete('pendataan/detail_koleksi_{id}')
+        end note
+        Controller -> Browser: 76b. set_flashdata success\nredirect('administrator/pendataan')
+    end
+    deactivate Controller
+    deactivate Server
+    Browser -> Admin: 77. Daftar pendataan dengan notifikasi
+    deactivate Browser
+end
+
+@enduml

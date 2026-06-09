@@ -1,0 +1,161 @@
+﻿@startuml
+skinparam sequenceMessageAlign center
+skinparam backgroundColor #FEFEFE
+skinparam ParticipantBackgroundColor #E8F4F8
+skinparam ArrowColor #333333
+skinparam ActorBackgroundColor #FFE6CC
+
+title SD-09 - Library Data Entry Flow
+
+actor "Operator Perpustakaan" as User
+participant Browser
+participant Server
+participant "Pendataan\nController" as Controller
+participant "Model_app" as Model
+database "MySQL" as Database
+
+User -> Browser: 1. Akses halaman formulir\nGET /pendataan
+activate Browser
+
+Browser -> Server: 2. GET /pendataan
+activate Server
+
+Server -> Controller: 3. index()
+activate Controller
+
+Controller -> Database: 4. SELECT * FROM config_pendataan\nWHERE id = 1
+activate Database
+Database --> Controller: 5. Return config
+deactivate Database
+
+alt status_pendataan = 'nonaktif'
+    Controller -> Browser: 6a. Render pendataan_closed\n(tampilkan pesan_nonaktif)
+    Browser -> User: 7a. Halaman pendataan ditutup
+else status_pendataan = 'aktif'
+    Controller -> Database: 6b. SELECT * FROM pertanyaan_koleksi\nWHERE aktif = 1\nORDER BY section, urutan ASC
+    activate Database
+    Database --> Controller: 7b. Return daftar pertanyaan
+    deactivate Database
+
+    Controller -> Database: 8. SELECT * FROM opsi_pertanyaan_koleksi\nWHERE id_pertanyaan IN (...)\nAND aktif = 1\nORDER BY id_pertanyaan, urutan
+    activate Database
+    Database --> Controller: 9. Return opsi jawaban
+    deactivate Database
+
+    note right of Controller
+        Cache hasil ke file cache
+        TTL: 86400 detik
+        Key: questions_with_options_v2
+    end note
+
+    Controller -> Browser: 10. Render view pendataan\n(pertanyaan dikelompokkan per section)
+    deactivate Controller
+    Browser -> User: 11. Tampilkan formulir pendataan\n(honeypot field tersembunyi)
+    deactivate Server
+end
+
+User -> Browser: 12. Isi formulir dan submit\nPOST /pendataan/submit
+activate Browser
+
+Browser -> Server: 13. POST /pendataan/submit\n(pertanyaan[], website_url=honeypot)
+activate Server
+
+Server -> Controller: 14. submit()
+activate Controller
+
+note right of Controller
+    Cek honeypot:
+    jika website_url != ''
+    → redirect terima_kasih (silent)
+end note
+
+alt Honeypot terisi (bot)
+    Controller -> Browser: 15a. redirect('pendataan/terima_kasih')
+    Browser -> User: 16a. Halaman terima kasih\n(tanpa simpan data)
+else Honeypot kosong (manusia)
+    Controller -> Database: 15b. Cek file cache\nrate_limit_session_{md5(session_id)}
+    activate Database
+    Database --> Controller: 16b. Return cache result
+    deactivate Database
+
+    alt Rate limit session terlampaui
+        Controller -> Browser: 17a. set_flashdata error\nredirect('pendataan')
+        Browser -> User: 18a. Formulir dengan pesan\n"sudah mengisi, tunggu 1 jam"
+    else Rate limit aman
+        Controller -> Database: 19. Cek file cache\ndouble_submit_{md5(session_id)}
+        activate Database
+        Database --> Controller: 20. Return cache result
+        deactivate Database
+
+        alt Double submission terdeteksi
+            Controller -> Browser: 21a. set_flashdata error\nredirect('pendataan')
+            Browser -> User: 22a. Formulir dengan pesan\n"data baru saja dikirim"
+        else Submission valid
+            note right of Controller
+                Jalankan form_validation:
+                - field wajib (required)
+                - tipe number: numeric, min, max
+                - max_length[1000]
+            end note
+
+            alt Validasi gagal
+                Controller -> Browser: 21b. set_flashdata validation_errors()\nredirect('pendataan')
+                Browser -> User: 22b. Formulir dengan pesan error validasi
+            else Validasi lolos
+                note right of Controller
+                    _sanitize_input():
+                    - strip null bytes
+                    - strip script tags
+                    - strip event handlers
+                    - trim & collapse whitespace
+                end note
+
+                Controller -> Database: 23. BEGIN TRANSACTION
+                activate Database
+
+                Controller -> Database: 24. INSERT INTO identitas_input_koleksi\n(nomor_pokok='-', tahun_data,\nip_address, session_id)
+                Database --> Controller: 25. Return id_koleksi (insert_id)
+                deactivate Database
+
+                Controller -> Database: 26. INSERT BATCH jawaban_koleksi\n(id_koleksi, id_pertanyaan, jawaban)\nuntuk setiap jawaban non-kosong
+                activate Database
+                Database --> Controller: 27. Return result
+                deactivate Database
+
+                Controller -> Database: 28. UPDATE identitas_input_koleksi\nSET nomor_pokok = jawaban[id_pertanyaan=1]\nWHERE id_koleksi = {id}
+                activate Database
+                Database --> Controller: 29. Return result
+                deactivate Database
+
+                alt trans_status() FALSE
+                    Controller -> Database: 30a. ROLLBACK
+                    Database --> Controller: 31a. Rollback complete
+                    deactivate Database
+                    Controller -> Browser: 32a. set_flashdata error\nredirect('pendataan')
+                    Browser -> User: 33a. Formulir dengan pesan\n"terjadi kesalahan penyimpanan"
+                else trans_status() OK
+                    Controller -> Database: 30b. COMMIT
+                    Database --> Controller: 31b. Commit complete
+                    deactivate Database
+
+                    note right of Controller
+                        Post-commit:
+                        - update rate_limit_session (TTL 3600)
+                        - update rate_limit_ip (TTL 3600)
+                        - set double_submit cache (TTL 30)
+                        - clear rekap & detail cache files
+                    end note
+
+                    Controller -> Browser: 32b. redirect('pendataan/terima_kasih')
+                    Browser -> User: 33b. Halaman terima kasih
+                end
+            end
+        end
+    end
+end
+
+deactivate Controller
+deactivate Server
+deactivate Browser
+
+@enduml

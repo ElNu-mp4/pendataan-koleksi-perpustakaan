@@ -1,0 +1,160 @@
+﻿@startuml
+skinparam sequenceMessageAlign center
+skinparam backgroundColor #FEFEFE
+skinparam ParticipantBackgroundColor #E8F4F8
+skinparam ArrowColor #333333
+skinparam ActorBackgroundColor #FFE6CC
+
+title SD-02 - News Browsing Flow
+
+actor Visitor
+participant Browser
+participant Server
+participant Router
+participant Controller
+participant Model
+database Database
+
+Visitor -> Browser: 1. Navigate to news page\nGET /berita
+activate Browser
+
+Browser -> Server: 2. GET /berita
+activate Server
+deactivate Browser
+
+Server -> Router: 3. Route to Berita controller
+activate Router
+deactivate Server
+
+Router -> Controller: 4. Call index() method
+activate Controller
+deactivate Router
+
+note right of Controller
+    Setup pagination:
+    - Count total news items
+    - Configure pagination library
+    - Handle search vs. regular listing
+end note
+
+Controller -> Model: 5. view('berita')->num_rows()
+activate Model
+
+Model -> Database: 6. SELECT COUNT(*) FROM berita
+activate Database
+
+Database --> Model: 7. Return total count
+deactivate Database
+
+Model --> Controller: 8. Return total count
+deactivate Model
+
+alt User submitted search form
+    note right of Controller
+        Search flow:
+        - Get search keyword from POST
+        - Call cari_berita() method
+        - Skip pagination for search results
+    end note
+
+    Controller -> Model: 9. cari_berita($keyword)
+    activate Model
+
+    Model -> Database: 10. SELECT berita.* FROM berita\nWHERE judul LIKE '%keyword%' OR isi_berita LIKE '%keyword%'\nORDER BY id_berita DESC
+    activate Database
+
+    Database --> Model: 11. Return search results
+    deactivate Database
+
+    Model --> Controller: 12. Return search results
+    deactivate Model
+
+else Regular news listing
+    note right of Controller
+        Regular listing flow:
+        - Use pagination offset
+        - Join with users and kategori tables
+        - Order by id_berita DESC
+    end note
+
+    Controller -> Model: 13. view_joinn('berita','users','kategori','username','id_kategori','id_berita','DESC',$offset,15)
+    activate Model
+
+    Model -> Database: 14. SELECT berita.*, users.username, kategori.nama_kategori\nFROM berita\nJOIN users ON berita.username = users.username\nJOIN kategori ON berita.id_kategori = kategori.id_kategori\nORDER BY berita.id_berita DESC\nLIMIT 15 OFFSET $offset
+    activate Database
+
+    Database --> Model: 15. Return paginated news
+    deactivate Database
+
+    Model --> Controller: 16. Return paginated news
+    deactivate Model
+end
+
+Controller -> Browser: 17. Render template\n(template().'/template', template().'/berita', $data)
+activate Browser
+
+Browser -> Visitor: 18. Display news list\nwith pagination
+deactivate Browser
+
+opt User clicks news detail
+    Visitor -> Browser: 19. Click news title\nGET /berita/detail/news-seo-slug
+    activate Browser
+
+    Browser -> Server: 20. GET /berita/detail/news-seo-slug
+    activate Server
+    deactivate Browser
+
+    Server -> Router: 21. Route to Berita controller detail()
+    activate Router
+    deactivate Server
+
+    Router -> Controller: 22. Call detail() method
+    activate Controller
+    deactivate Router
+
+    Controller -> Model: 23. view_join_two('berita','users','kategori','username','id_kategori',['judul_seo'=>$seo],'id_berita','DESC',0,1)
+    activate Model
+
+    Model -> Database: 24. SELECT berita.*, users.username, kategori.nama_kategori\nFROM berita\nJOIN users ON berita.username = users.username\nJOIN kategori ON berita.id_kategori = kategori.id_kategori\nWHERE berita.judul_seo = '$seo'\nORDER BY berita.id_berita DESC LIMIT 1
+    activate Database
+
+    Database --> Model: 25. Return news detail
+    deactivate Database
+
+    Model --> Controller: 26. Return news data
+    deactivate Model
+
+    alt News found
+        note right of Controller
+            Update read counter:
+            - Increment dibaca field
+            - Generate captcha for comments
+        end note
+
+        Controller -> Model: 27. update('berita', ['dibaca'=>$dibaca+1], ['id_berita'=>$id])
+        activate Model
+
+        Model -> Database: 28. UPDATE berita SET dibaca = dibaca + 1\nWHERE id_berita = $id
+        activate Database
+
+        Database --> Model: 29. Update successful
+        deactivate Database
+
+        Model --> Controller: 30. Return update result
+        deactivate Model
+
+        Controller -> Browser: 31. Render detail template\n(template().'/template', template().'/detailberita', $data)
+        activate Browser
+
+        Browser -> Visitor: 32. Display news detail\nwith captcha for comments
+        deactivate Browser
+
+    else News not found
+        Controller -> Browser: 33. redirect('main')
+        activate Browser
+        Browser -> Visitor: 34. Redirect to homepage
+        deactivate Browser
+    end
+end
+
+@enduml
